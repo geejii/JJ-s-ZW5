@@ -1,5 +1,5 @@
 /**
- *  Fibaro Z-Wave FGK-101 Temperature & Door/Window Sensor Handler [v0.9.6, 14 April 2017]
+ *  Fibaro Z-Wave FGK-101 Temperature & Door/Window Sensor Handler [v0.9.6.1, 14 April 2017]
  *		
  *  Copyright 2014 Jean-Jacques GUILLEMAUD
  *
@@ -455,7 +455,7 @@ def openClosed(cmd, cmdValue) {
     // Use closed/open sensor notification to trigger push of updated Temperature value and immediate setting of updated device parameters
     // Sometimes, Temperature forced refresh stops working : SensorMultilevelGet() Commands are stacked but not executed immediately;
     // will restart after some time, and stacked Commands will be executed !
-    def event = createEvent(name:"contact - ${cmd}", value:"${theState}", descriptionText:"${device.displayName} is ${theState}", isStateChange:true, displayed:true, linkText:"${device.displayName}")
+    def event = createEvent(name:"contact", value:"${theState}", descriptionText:"${device.displayName} is ${theState} [${cmd}]", isStateChange:true, displayed:true, linkText:"${device.displayName}")
     sendEvent(name: "forcedWakeUp", value: 1, displayed: false)
     def cmdBlock = []
     cmdBlock=wakeUpResponse(cmdBlock)
@@ -486,14 +486,14 @@ def zwaveEvent(physicalgraph.zwave.commands.notificationv3.NotificationReport cm
     if (cmd.notificationType == 6) {
     	switch (cmd.event) {                
         	case 22:
-            	map.name = "contact - NotificationReport"
+            	map.name = "contact"
                 map.value = "open"
-                map.descriptionText = "${device.displayName} is open"
+                map.descriptionText = "${device.displayName} is open [NotificationReport]"
             	break
             case 23:
-            	map.name = "contact - NotificationReport"
+            	map.name = "contact"
                 map.value = "closed"
-                map.descriptionText = "${device.displayName} is closed"
+                map.descriptionText = "${device.displayName} is closed [NotificationReport]"
             	break
         }
     // Contrary to pre-ZW5 Devices, the Tamper Notification does not occur for only a brief 
