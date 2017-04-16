@@ -1,5 +1,5 @@
 /**
- *  Fibaro Z-Wave FGK-101 Temperature & Door/Window Sensor Handler [v0.9.6.2, 15 April 2017]
+ *  Fibaro Z-Wave FGK-101 Temperature & Door/Window Sensor Handler [v0.9.6.3, 16 April 2017]
  *		
  *  Copyright 2014 Jean-Jacques GUILLEMAUD
  *
@@ -15,9 +15,10 @@
  */
  
 /******************************************************************************************************************************
-/* IMPORTANT : This is a BETA Version of this custom Handler for Z-wave+ (aka ZW5) versions of the FGK-101 Fibaro sensor
-/* Until further notice, please refrain from using it on older pre-ZW5 versions of the FGK-101, since non-regression tests
-/* are not complete.
+/* IMPORTANT : This custom Handler should work both for Z-wave+ (aka ZW5) versions of the FGK-101 Fibaro sensor
+/*             as well as for pre-ZW5 versions of the FGK-101 hardware.
+/*             TWO consecutive wakeups (using the bottom Tamper switch), separated by 5 seconds, are needed for the Handler to 
+/*             dynamically recognize to which hardware version it is connected.      
 /******************************************************************************************************************************
  *	Fibaro Z-Wave FGK-101 Marketing Description is at :
  *		http://www.fibaro.com/en/the-fibaro-system/door-window-sensor
@@ -429,9 +430,10 @@ def openClosed(cmd, cmdValue) {
 }
     
 // BasicSet does not seem to wait for any Commands answers, going back to sleep immediately ???
+// Thus it cannot perform proper initial Configuration => use SensorAlarmReport instead
 def zwaveEvent(physicalgraph.zwave.commands.basicv1.BasicSet cmd) {
     log.debug "basicv1.BasicSet $cmd"
-    if ((device.currentValue('ZW5set')==1) && (device.currentValue('ZW5')!=1)) {
+    if (device.currentValue('ZW5')!=1) {
     	def cmdValue = cmd.value
 		return openClosed(cmd, cmdValue)
     }
@@ -491,7 +493,7 @@ def zwaveEvent(physicalgraph.zwave.commands.notificationv3.NotificationReport cm
 // SensorAlarmReport DOES wait for optional Commands answers, contrary to BasicSet
 def zwaveEvent(physicalgraph.zwave.commands.sensoralarmv1.SensorAlarmReport cmd) {
     if (state.debugLevel>=2) {log.debug "sensoralarmv1.SensorAlarmReport $cmd.sensorState"}
-    if ((device.currentValue('ZW5set')==1) && (device.currentValue('ZW5')!=1)) {
+    if (device.currentValue('ZW5')!=1) {
     	def event = createEvent(name:"alarm", descriptionText:"${device.displayName} is tampered with !", isStateChange:true, displayed:true, linkText:"${device.displayName}")
     	def cmdBlock = []
     	sendEvent(name: "forcedWakeUp", value: 1, displayed: false)
@@ -670,7 +672,7 @@ def configureDev() {
         // inclusion of Device in Association#2 is needed to enable SensorAlarmReport() Command [anti-Tampering protection]
         cmdBlock << zwave.associationV2.associationSet(groupingIdentifier:2, nodeId:[zwaveHubNodeId]).format()
         cmdBlock << "delay ${state.longDelay}"
-		cmdBlock << zwave.sensormultilevelv5.sensorMultilevelGet(sensorType: 1, scale: 0).format()
+		cmdBlock << zwave.sensorMultilevelV5.sensorMultilevelGet(sensorType: 1, scale: 0).format()
         cmdBlock << "delay ${state.longDelay}"
         cmdBlock << zwave.configurationV2.configurationGet(parameterNumber: 12/*for FGK101*/).format()
         sendEvent(name: "Initialized", value: 1)
