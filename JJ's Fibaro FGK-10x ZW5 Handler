@@ -1,5 +1,5 @@
 /**
- *  Fibaro Z-Wave FGK-101 Temperature & Door/Window Sensor Handler [v0.9.6.5, 19 April 2017]
+ *  Fibaro Z-Wave FGK-101 Temperature & Door/Window Sensor Handler [v0.9.6.6, 4 May 2017]
  *		
  *  Copyright 2014 Jean-Jacques GUILLEMAUD
  *
@@ -15,34 +15,36 @@
  */
  
 /******************************************************************************************************************************
-/* IMPORTANT : This custom Handler should work both for Z-wave+ (aka ZW5) versions of the FGK-101 Fibaro sensor
+/* IMPORTANT : This custom Handler works both for Z-Wave+ (aka ZW5) versions of the FGK-101 Fibaro sensor,
 /*             as well as for pre-ZW5 versions of the FGK-101 hardware.
-/*             TWO consecutive wakeups (using the bottom Tamper switch), separated by 5 seconds, are needed for the Handler to 
-/*             dynamically recognize to which hardware version it is connected.      
+/*             It takes about 1mn for the FGK-101 to fully configure itself after the first (manual or otherwise) wakeup.
 /******************************************************************************************************************************
  *	Fibaro Z-Wave FGK-101 Marketing Description is at :
  *		http://www.fibaro.com/en/the-fibaro-system/door-window-sensor
  *
- *  Fibaro FGK-10x Operating Manual can be downloaded at :
- *		Z-Wave / Firmware <= 2.5 		: http://www.fibaro.com/files/instrukcje/eng/DoorWindowSensor%20FGK-101-107%20ENG_v21-v23.pdf 
+ *  Fibaro FGK-10x Operating Manuals and Z-Wave Alliance Certificates can be downloaded at :
+ *		Z-Wave / Firmware <= 2.5 		: http://www.fibaro.com/files/instrukcje/eng/DoorWindowSensor%20FGK-101-107%20ENG_v21-v23.pdf
+ *										: http://products.z-wavealliance.org/products/1077
  *		Z-Wave+ / ZW5 / Firmware >= 3.2 : http://manuals.fibaro.com/content/manuals/en/FGK-10x/FGK-10x-EN-T-v2.0.pdf
+ *										: http://products.z-wavealliance.org/products/1620
  *
  *	The current version of this Handler is parameterized to force Device's wakeup :
  *		- on any open<->closed state change
  *		- in case of Tampering Alarm triggering
  *		- every 60mn (wakeUpIntervalSet(seconds:60*60), hard coded)
- *		- whenever Temperature delta change since last report is greater than 0.31°C (Parameter#12, hard coded)
+ *		- whenever Temperature delta change since last report is greater than 0.3°C (Parameter#12 or #51, hard coded)
+ *		- every 4h when Temperature does not change
  *		also :
  *		- Temperature is natively reported by sensor in Celsius (SensorMultilevelReport[scale:0]);
  *		  convertion is needed for Fahrenheit display 
  *
  *  A few specificities of this device that are relevant to better understand some parts of this Handler :
  *		- it is a battery operated device, so Commands can only be sent to it whenever it wakes up
- *		- it is a multi-channel Device, and the multi-level temperature sensor reports only from EndPoint#2
- *		- specific configurable parameters are documented in the above Operating Manual
+ *		- it is a multi-channel Device (pre-ZW5), and the multi-level temperature sensor reports only from EndPoint#2
+ *		- specific configurable parameters are documented in the above Operating Manuals
  *		- some of those parameters must be modified to activate the anti-Tampering Alarm
  *		- some of the "scaffolding" has been left in place as comments, since it may help other people to understand/modify this Handler
- *		- BEWARE : the optional DS18B20 sensor must be connected BEFORE the Device is activated (otherwise, reset the Device)
+ *		- BEWARE : the optional DS18B20 temperature sensor must be connected BEFORE the Device is activated (otherwise, reset the Device)
  *		- IMPORTANT : for debugging purpose, it is much better to change the wake-up period from the default 60mn to 1mn or so;
  *					but unless you force the early wake up of the sensor (forcing open/closed for instance), you will have to
  *					wait up to 60mn for the new value to become effective.
@@ -50,27 +52,22 @@
  * Z-Wave Device Class: GENERIC_TYPE_SENSOR_BINARY / SPECIFIC_TYPE_ROUTING_SENSOR_BINARY
  * FGK-101 Raw Description [EndPoint:0] : "0 0 0x2001 0 0 0 c 0x30 0x9C 0x60 0x85 0x72 0x70 0x86 0x80 0x84 0x7A 0xEF 0x2B"
  * Command Classes supported according to Z-Wave Certificate ZC08-14070004 for FGK-101\US :
- * 	Used in Handler :
- *		- 0x20 - 32  : BASIC					V1
- *		  0x30 - 48  : SENSOR_BINARY			V1 !V2!
- *		- 0x31 - 49  : SENSOR_MULTILEVEL		V1 V2 V3 V4 !V5!
- *		- 0x56 - 86  : CRC_16_ENCAP				V1
- *		  0x60 - 96  : MULTI_CHANNEL			V3
- *		  0x70 - 112 : CONFIGURATION			V1 !V2!
- *		  0x72 - 114 : MANUFACTURER_SPECIFIC 	V1 !V2!
- *		  0x80 - 128 : BATTERY					V1
- *		  0x84 - 132 : WAKE_UP					V1 !V2!
- *		  0x85 - 133 : ASSOCIATION				V1 !V2!
- *		  0x86 - 134 : VERSION					V1
- *		  0x9C - 156 : SENSOR_ALARM				V1
- *	Added for ZW5 / Firmware 3.2 version :
- *		  0x98 - 152 : SECURITY					V1
- *	NOT used in Handler :
- *		  0x2B - 43  : SCENE_ACTIVATION			V1	
- *
- *	 also found in FGK-101 Raw Description, in addition to Z-Wave Certificate for FGK-101\US [?!!] :
- *		+ 0x7A - 122 : FIRMWARE_UPDATE_MD		V1 V2
- *		+ 0xEF - 239 : MARK  					V1
+ * 	 Used in Handler (pre-ZW5 and ZW5) :
+ *		0x20 - 32  : BASIC					V1
+ *		0x30 - 48  : SENSOR_BINARY			V2
+ *		0x31 - 49  : SENSOR_MULTILEVEL		V5
+ *		0x56 - 86  : CRC_16_ENCAP			V1
+ *		0x70 - 112 : CONFIGURATION			V2
+ *		0x80 - 128 : BATTERY				V1
+ *		0x84 - 132 : WAKE_UP				V2
+ *		0x85 - 133 : ASSOCIATION			V2
+ *		0x86 - 134 : VERSION				V1
+ *		0x9C - 156 : SENSOR_ALARM			V1
+ * 	 Used in Handler (pre-ZW5 only) :
+ *		0x60 - 96  : MULTI_CHANNEL			V3
+ * 	 Used in Handler (ZW5 only) :
+ *		0x71 - 113 : NOTIFICATION			V3	
+ *		0x98 - 152 : SECURITY				V1
  ******************************************************************************************************************************/
 
 /******************************************************************************************************************************
@@ -79,10 +76,11 @@
  *		  attempted workaround using : valueTile(){unit:'${displayName}') failed
  *		- valueTile behaves differently on mobile Dashboard (interpolated colors) from Simulator (step-wise colors)
  *		- using Preferences values instead of hard-coded values for some parameters would be nicer
+ *		- ZW5 : Sensor Multilevel Report() received in answer to Sensor Multilevel Get() is buggy (+/- 1°C random error)
  *****************************************************************************************************************************/
 
 metadata {
-	definition (name: "JJ's ZW5 Handler", namespace: "JJG2014", author: "Jean-Jacques GUILLEMAUD") {
+	definition (name: "JJ's Fibaro FGK-10x ZW5 Handler", namespace: "JJG2014", author: "Jean-Jacques GUILLEMAUD") {
 		capability "Contact Sensor"
 		capability "Battery"
 		capability "Configuration"
@@ -96,9 +94,9 @@ metadata {
         // Use Device Custom Attributes whenever state.xxx Attributes are too vulnerable to race conditions
         attribute "reportASAP", "number"
         attribute "forcedWakeUp", "number"
-        attribute "ZW5", "number"
         attribute "ZW5set", "number"
-        attribute "Initialized", "number"
+        attribute "ZW5", "number"
+        attribute "Configured", "number"
 
         // FGK-101 Raw Description [EndPoint:0] : "0 0 0x2001 0 0 0 c 0x30 0x9C 0x60 0x85 0x72 0x70 0x86 0x80 0x84 0x7A 0xEF 0x2B"
 		fingerprint deviceId: "0x2001", inClusters: "0x85, 0x20, 0x80, 0x70, 0x56, 0x72, 0x9C, 0x30, 0x31, 0x86, 0x84, 0x7A, 0x2B"  // fingerprint as intersection of ZW6 & non-ZW5 fingerprints
@@ -205,7 +203,7 @@ def parse(String description) {
 }
 
 
-//SmartThings v2 Hub forces CRC16-encoded replies from FGK-101 Device (v1 Hub did not)
+//SmartThings v2 Hub forces some CRC16-encoded replies from FGK-101 Device (v1 Hub did not)
 def zwaveEvent(physicalgraph.zwave.commands.crc16encapv1.Crc16Encap cmd) {
 	log.debug "CRC16.......... cmd : ${cmd}"
     def versions = [0x20:1, 0x30: 2, 0x31: 5, 0x60: 3, 0x70: 2, 0x72: 2, 0x80: 1, 0x84: 2, 0x86: 1, 0x9C: 1]
@@ -226,11 +224,11 @@ def zwaveEvent(physicalgraph.zwave.commands.crc16encapv1.Crc16Encap cmd) {
 }
 
 // ZW5 Devices that support the Security command class can send messages in an
-// ZW5 encrypted form; they arrive wrapped in a SecurityMessageEncapsulation
-// ZW5 command and must be unencapsulated
+// encrypted form; they arrive wrapped within a SecurityMessageEncapsulation
+// command and must be unencapsulated
 def zwaveEvent(physicalgraph.zwave.commands.securityv1.SecurityMessageEncapsulation cmd) {
 		log.debug "cmd : ${cmd}"
-        def encapsulatedCommand = cmd.encapsulatedCommand([0x20: 1, 0x71: 3, 0x84: 2, 0x85: 2, 0x98: 1])
+        def encapsulatedCommand = cmd.encapsulatedCommand([0x20: 1, 0x30: 2, 0x70: 2, 0x71: 3, 0x84: 2, 0x85: 2, 0x98: 1, 0x9C: 1])
         // can specify command class versions here like in zwave.parse
         if (encapsulatedCommand) {
     			log.debug "ZW5 encapsulatedCommand : ${encapsulatedCommand}"
@@ -242,7 +240,7 @@ def zwaveEvent(physicalgraph.zwave.commands.securityv1.SecurityMessageEncapsulat
 }
 
 def temperatureScaleFC(tempvalue) {
-	//FGK-101 is natively °C; convert to °F if selected in settings
+	//FGK-101 is natively °C; convert to °F if selected in Location settings
 	def float tempFC = tempvalue
 	if (location.temperatureScale == "F") {
 		tempFC = tempvalue * 1.8 + 32
@@ -250,13 +248,16 @@ def temperatureScaleFC(tempvalue) {
 	return tempFC
 }
 
-def wakeUpResponse(cmdBlock) {
+def wakeUpResponse(cmdBlock0) {
+	def cmdBlock = []
+	cmdBlock += cmdBlock0
 	//Initialization... (executed only once, when the Handler has been updated)
     //All untouched parameters are supposed to be DEFAULT (as factory-set)
-    	if (state.debugLevel>=2) {log.debug "device.Initialized : ${device.currentValue('Initialized')}"}
-    if (device.currentValue('Initialized')!=1)  {
-        cmdBlock << configureDev()
-    }
+    if (state.debugLevel>=2) {log.debug "device.Configured : ${device.currentValue('Configured')}"}
+    if (!(device.currentValue('Configured'))) {
+		cmdBlock += configureDev()
+		log.debug "++++++++returned cmdBlock : ${cmdBlock}"
+	}
 	//Regular ZW5 & non-ZW5 Commands...
     def long nowTime = new Date().getTime()
     log.debug "state.lastReportBattery : ${state.lastReportBattery}"
@@ -270,14 +271,18 @@ def wakeUpResponse(cmdBlock) {
     	//ZW5 : "wakeUpIntervalReport doesn’t work uint24FromBytes missing from response" : https://community.smartthings.com/t/wakeupintervalget-doesnt-work-uint24frombytes-missing-from-response/10577
     	//cmdBlock << encap(zwave.wakeUpV2.wakeUpIntervalGet()) // NB : may have to wait 60mn for that value to be refreshed !
     	//cmdBlock << "delay ${state.longDelay}"
-    if ((device.currentValue('ZW5set')==1) && (device.currentValue('ZW5')==1)) {
-        // sensorMultilevelGet() should definitely NOT be CRC16 encoded ! [buggy ZW5 Fibaro handler !!]
-    	cmdBlock << zwave.sensorMultilevelV5.sensorMultilevelGet(sensorType: 1, scale: 0).format()
-    } else {
-    	cmdBlock << zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint: 2, destinationEndPoint: 2, commandClass:0x31/*Sensor Multilevel*/, command:4/*Get*/).format()
+    if (device.currentValue('ZW5set')) {
+    	if (device.currentValue('ZW5')) {
+        	// sensorMultilevelGet() should definitely NOT be CRC16 encoded ! [buggy ZW5 Fibaro handler !!]
+            // sensorMultilevelReport() synchronous answer to sensorMultilevelGet() is buggy for whatever reason (+/-1°C) => disable sensorMultilevelGet()
+			//cmdBlock << zwave.sensorMultilevelV5.sensorMultilevelGet(sensorType: 1, scale: 0).format()
+			//cmdBlock << "delay ${state.longDelay}"
+    	} else {
+    		cmdBlock << zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint: 2, destinationEndPoint: 2, commandClass:0x31, command:4).format()  //sensorMultiLevel.get()
+            cmdBlock << "delay ${state.longDelay}"
+    	}
     }
-    cmdBlock << "delay ${state.longDelay}"
-    cmdBlock << encap(zwave.wakeUpV2.wakeUpNoMoreInformation())
+	cmdBlock << zwave.wakeUpV2.wakeUpNoMoreInformation().format()
     if (state.debugLevel>=2) {
         log.debug "wakeUpNoMoreInformation()"
         log.debug "cmdBlock : ${cmdBlock}"
@@ -286,13 +291,20 @@ def wakeUpResponse(cmdBlock) {
 }
 
 def zwaveEvent(physicalgraph.zwave.commands.wakeupv2.WakeUpNotification cmd) {
-    	if (state.debugLevel>=2) {log.debug "wakeupv2.WakeUpNotification $cmd"}
+    	log.debug "wakeupv2.WakeUpNotification $cmd"
         def event = createEvent(descriptionText: "${device.displayName} woke up", isStateChange: true, displayed: false)
         def cmdBlock = []
-        return [event, response(wakeUpResponse(cmdBlock))]
+        cmdBlock = wakeUpResponse([])
+        return [event, response(cmdBlock)]
 }
 
 def zwaveEvent(physicalgraph.zwave.commands.sensormultilevelv5.SensorMultilevelReport cmd) {
+        	log.debug "SensorMultilevelReport.precision : ${cmd.precision}"
+            log.debug "SensorMultilevelReport.scale : ${cmd.scale}"
+            log.debug "SensorMultilevelReport.scaledSensorValue : ${cmd.scaledSensorValue}"
+            log.debug "SensorMultilevelReport.sensorType : ${cmd.sensorType}"
+            log.debug "SensorMultilevelReport.sensorValue : ${cmd.sensorValue}"
+            log.debug "SensorMultilevelReport.size : ${cmd.size}"
         def float scaledSensorValue = cmd.scaledSensorValue
         // Adjust measured temperature based on previous manual calibration; FGK-101 is natively °C
         switch (device.name) {
@@ -356,8 +368,6 @@ def zwaveEvent(physicalgraph.zwave.commands.sensormultilevelv5.SensorMultilevelR
         	log.debug "ftempSign : ${ftempSign}"
         	log.debug "ftemp : ${ftemp}"
         }
-        // Next line needed because "update()" does not seem to work anymore
-    	// state.maxEventInterval = (long) (4*60-10)*60*1000  // at least 1 Temperature Report event every 4 hours
         def long nowTime = new Date().getTime()
         if (state.debugLevel>=2) {
         	log.debug "cmd.scaledSensorValue : ${cmd.scaledSensorValue}"
@@ -381,6 +391,8 @@ def zwaveEvent(physicalgraph.zwave.commands.sensormultilevelv5.SensorMultilevelR
         }
         log.debug "device.forcedWakeUp : ${device.currentValue('forcedWakeUp')}"
         log.debug "((ftemp-state.lastReportedTemp).abs()>${tempQuantum}): ${(ftemp-state.lastReportedTemp).abs()>tempQuantum}"
+        // Spurious faulty Temperature Reports cropped when temparture gradient is unbelievable (?)
+        if ((((ftemp-state.lastReportedTemp).abs())/(nowTime-state.lastReportTime)) < (0.5/1000)) { // ignore temperature report when slope > 0.5°C/s
         if (((ftemp-state.lastReportedTemp).abs()>tempQuantum) || ((nowTime-state.lastReportTime) > state.maxEventInterval) || device.currentValue('forcedWakeUp')) {
         	def map = [ displayed: true, value: ftemp.toString(), isStateChange:true, linkText:"${device.displayName}" ]
         	if (cmd.sensorType == 1) {
@@ -400,6 +412,9 @@ def zwaveEvent(physicalgraph.zwave.commands.sensormultilevelv5.SensorMultilevelR
             // For Test purpose; redondant with reportNext() => device.forcedWakeUp=1
             if (device.currentValue('reportASAP')==1) {sendEvent(name: "reportASAP", value: 0, isStateChange: true)}
         	return createEvent(map)
+        }
+        } else {
+        log.debug "+++++++++discarded temperature report : rate change : ${(((ftemp-state.lastReportedTemp).abs())/(nowTime-state.lastReportTime))*1000}°C/s"
         }
 }
 
@@ -425,16 +440,14 @@ def openClosed(cmd, cmdValue) {
     // will restart after some time, and stacked Commands will be executed !
     def event = createEvent(name:"contact", value:"${theState}", descriptionText:"${device.displayName} is ${theState} [${cmd}]", isStateChange:true, displayed:true, linkText:"${device.displayName}")
     sendEvent(name: "forcedWakeUp", value: 1, displayed: false)
-    def cmdBlock = []
-    cmdBlock=wakeUpResponse(cmdBlock)
-    return [event, response(cmdBlock)]
+    return [event, response(wakeUpResponse([]))]
 }
     
 // BasicSet does not seem to wait for any Commands answers, going back to sleep immediately ???
 // Thus it cannot perform proper initial Configuration => use SensorAlarmReport instead
 def zwaveEvent(physicalgraph.zwave.commands.basicv1.BasicSet cmd) {
     log.debug "basicv1.BasicSet $cmd"
-    if (device.currentValue('ZW5')!=1) {
+    if ((device.currentValue('ZW5set')) && (!(device.currentValue('ZW5')))) {
     	def cmdValue = cmd.value
 		return openClosed(cmd, cmdValue)
     }
@@ -444,14 +457,14 @@ def zwaveEvent(physicalgraph.zwave.commands.basicv1.BasicSet cmd) {
 // ...but ZW5 uses it instead of BasicSet, and in addition to Notification
 def zwaveEvent(physicalgraph.zwave.commands.sensorbinaryv2.SensorBinaryReport cmd) {
     log.debug "sensorbinaryv2.SensorBinaryReport $cmd"
-    if ((device.currentValue('ZW5set')==1) && (device.currentValue('ZW5')!=1)) {
+    if ((device.currentValue('ZW5set')) && (!(device.currentValue('ZW5')))) {
     	def cmdValue = cmd.sensorValue
 		return openClosed(cmd, cmdValue)
     }
 }
 
 // ZW5 : it is assumed that default notification events are used
-// ZW5 : (parameter 20 was not changed before device's re-inclusion)
+// (parameter 20 was not changed before device's re-inclusion)
 def zwaveEvent(physicalgraph.zwave.commands.notificationv3.NotificationReport cmd) {
     def map = [:]
     if (cmd.notificationType == 6) {
@@ -475,7 +488,7 @@ def zwaveEvent(physicalgraph.zwave.commands.notificationv3.NotificationReport cm
         	case 0:
             	map.name = "tamper"
                 map.value = "inactive"
-                map.descriptionText = "${device.displayName}: tamper alarm has been deactivated"
+                map.descriptionText = "${device.displayName} tamper detection enabled"
 				break     
         	case 3:
             	map.name = "tamper"
@@ -486,9 +499,7 @@ def zwaveEvent(physicalgraph.zwave.commands.notificationv3.NotificationReport cm
     }
     sendEvent(name: "forcedWakeUp", value: 1, displayed: false)
     def event = createEvent(map)
-    def cmdBlock = []
-    cmdBlock=wakeUpResponse(cmdBlock)
-    return [event, response(cmdBlock)]
+	return [event, response(wakeUpResponse([]))]
 }
 
 // SensorAlarmReport DOES wait for optional Commands answers, contrary to BasicSet
@@ -530,6 +541,28 @@ def zwaveEvent(physicalgraph.zwave.commands.batteryv1.BatteryReport cmd) {
 
 def zwaveEvent(physicalgraph.zwave.commands.configurationv2.ConfigurationReport cmd) {
     if (state.debugLevel>=2) {log.debug "ConfigurationReport - Parameter#${cmd.parameterNumber}: ${cmd.configurationValue}"}
+	// Last configuration command execution; check UNIQUE(<>default) value is set
+    // A bit of an overkill : checking the cmd.parameterNumber (12 or 51) should be enough...
+	def byte tempQuantumSixteenth
+	if (device.displayName.substring(0,1).equals("*")) {
+		tempQuantumSixteenth = 16	/* 16/16=1°C = 1.8°F */
+	} else {
+		tempQuantumSixteenth = 5	/* 5/16=0.31°C = 0.56°F */
+	}
+	if (device.currentValue('ZW5set') && !(device.currentValue('ZW5')) && (cmd.parameterNumber == 12) && (cmd.configurationValue == [0,tempQuantumSixteenth])) {
+		sendEvent(name: "Configured", value: 1)
+		log.debug ("++++++Non-ZW5 Device Configured++++++")
+	}
+	def byte tempQuantumTenth
+	if (device.displayName.substring(0,1).equals("*")) {
+    	tempQuantumTenth = 10	/* 10/10=1°C = 1.8°F */
+    } else {
+    	tempQuantumTenth = 3	/* 3/10=0.3°C = 0.56°F */
+    }
+	if (device.currentValue('ZW5set') && device.currentValue('ZW5') && (cmd.parameterNumber == 51) && (cmd.configurationValue == [0,tempQuantumTenth])) {
+		sendEvent(name: "Configured", value: 1)
+		log.debug ("++++++ZW5 Device Configured++++++")
+	}
 }
 
 def zwaveEvent(physicalgraph.zwave.commands.associationv2.AssociationReport cmd) {
@@ -569,8 +602,7 @@ def zwaveEvent(physicalgraph.zwave.commands.versionv1.VersionReport cmd) {
     sendEvent(name: "ZW5set", value: 1)
     log.debug "device.ZW5set: ${device.currentValue('ZW5set')}"
     log.debug "device.ZW5: ${device.currentValue('ZW5')}"
-    def cmdBlock = []
-    return [response(wakeUpResponse(cmdBlock))]
+    return [response(wakeUpResponse([]))]
 }
  
 // MultiChannelCmdEncap and MultiInstanceCmdEncap are ways that devices can indicate that a message
@@ -606,7 +638,7 @@ def updated() {
 	log.debug "Updated !"
     sendEvent(name: "ZW5set", value: 0)
     sendEvent(name: "ZW5", value: 0)
-    sendEvent(name: "Initialized", value: 0)  // set to true by the LAST Command Response from configureDev()
+    sendEvent(name: "Configured", value: 0)  // set to true by the LAST Command Response from configureDev()
     sendEvent(name: "forcedWakeUp", value: 1)
     // All state.xxx attributes are Device-local, NOT Location-wide
     // BEWARE : state.xxx attributes are vulnerable to race conditions; when not mostly read-only, use device.xxx instead
@@ -614,7 +646,7 @@ def updated() {
     state.lastReportTime = (long) 0
     state.lastReportBattery = (long) 0
     state.longDelay = 1200
-    state.shortDelay = 500
+state.shortDelay = 1200
 	// Real-time clock of sensors (ceramic resonator) is up to 3% inaccurate
     state.batteryInterval = (long) (24*60-45)*60*1000  // 83 700 000 : at least 1 Battery Report event every 23:15 hours
     state.maxEventInterval = (long) (4*60-10)*60*1000  // 13 800 000 : at least 1 Temperature Report event every 3:50 hours
@@ -641,8 +673,9 @@ def configureDev() {
 	def cmdBlock = []
     log.debug "device.ZW5set: ${device.currentValue('ZW5set')}"
     log.debug "device.ZW5: ${device.currentValue('ZW5')}"
-    log.debug "device.Initialized: ${device.currentValue('Initialized')}"
-    if (device.currentValue('ZW5set')!=1)  {
+    log.debug "device.Configured: ${device.currentValue('Configured')}"
+    /////////////// Common configuration
+    if (!(device.currentValue('ZW5set')))  {
     	log.debug "Configuring - Common Part............................................."
     	log.debug "cmdBlock: ${cmdBlock}"
 		cmdBlock << zwave.versionV1.versionGet().format() 
@@ -650,9 +683,13 @@ def configureDev() {
         // batteryGet() should definitely NOT be CRC16 encoded ! [buggy ZW5 Fibaro handler !!]
 		cmdBlock << zwave.batteryV1.batteryGet().format()
         cmdBlock << "delay ${state.longDelay}"
+		cmdBlock << zwave.wakeUpV2.wakeUpNoMoreInformation().format()
     	log.debug "cmdBlock: ${cmdBlock}"
+		log.debug "++++++Last Common Configuration Command SENT++++++"
+		return cmdBlock
     }
-    if ((device.currentValue('Initialized')!=1)&&(device.currentValue('ZW5set')==1)&&(device.currentValue('ZW5')!=1)) {
+    /////////////// Non-ZW5 specific configuration
+    if (!(device.currentValue('Configured')) && device.currentValue('ZW5set') && !(device.currentValue('ZW5'))) {
 		log.debug  "Configuring - NON ZW5............................................."
         // Make sure sleepy battery-powered sensors send their WakeUpNotifications to the hub
 		cmdBlock << zwave.wakeUpV2.wakeUpIntervalSet(seconds:60*60, nodeid:zwaveHubNodeId).format()
@@ -674,12 +711,17 @@ def configureDev() {
         // inclusion of Device in Association#2 is needed to enable SensorAlarmReport() Command [anti-Tampering protection]
         cmdBlock << zwave.associationV2.associationSet(groupingIdentifier:2, nodeId:[zwaveHubNodeId]).format()
         cmdBlock << "delay ${state.longDelay}"
-		cmdBlock << zwave.sensorMultilevelV5.sensorMultilevelGet(sensorType: 1, scale: 0).format()
-        cmdBlock << "delay ${state.longDelay}"
-        cmdBlock << zwave.configurationV2.configurationGet(parameterNumber: 12/*for FGK101*/).format()
-        sendEvent(name: "Initialized", value: 1)
+//cmdBlock << zwave.sensorMultilevelV5.sensorMultilevelGet(sensorType: 1, scale: 0).format()
+cmdBlock << zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint: 2, destinationEndPoint: 2, commandClass:0x31, command:4).format()  //sensorMultiLevel.get()
+cmdBlock << "delay ${state.longDelay}"
+        // Should be last for proper checking of complete initialization (through configurationReport)
+		cmdBlock << zwave.configurationV2.configurationGet(parameterNumber: 12/*for FGK101*/).format()
+		cmdBlock << "delay ${state.longDelay}"
+cmdBlock << zwave.wakeUpV2.wakeUpNoMoreInformation().format()
+        log.debug "++++++Last non-ZW5 Configuration Command SENT++++++"
     } 
-    if ((device.currentValue('Initialized')!=1)&&(device.currentValue('ZW5set')==1)&&(device.currentValue('ZW5')==1)) {
+    /////////////// ZW5 specific configuration
+    if (!(device.currentValue('Configured')) && device.currentValue('ZW5set') && device.currentValue('ZW5')) {
     	log.debug "Configuring - ZW5............................................."
             //ZW5 : "wakeUpIntervalReport doesn’t work uint24FromBytes missing from response" : https://community.smartthings.com/t/wakeupintervalget-doesnt-work-uint24frombytes-missing-from-response/10577
             //cmdBlock << encap(zwave.wakeUpV2.wakeUpIntervalGet())
@@ -695,30 +737,31 @@ def configureDev() {
     	} else {
     		tempQuantumTenth = 3	/* 3/10=0.3°C = 0.56°F */
     	}
-    		// sensorMultilevelGet() should definitely NOT be CRC16 encoded ! [buggy ZW5 Fibaro handler !!]
-    		cmdBlock << zwave.sensorMultilevelV5.sensorMultilevelGet(sensorType: 1, scale: 0).format()
-    		cmdBlock << "delay ${state.longDelay}"
-            cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 3/*for FGK101*/, size: 1, configurationValue: [5]))  // LED blinks on Tampering & Open/Close
-            cmdBlock << "delay ${state.shortDelay}"
-            //cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 50/*for FGK101*/, size: 2, configurationValue: [1,44])) // 0x012C = 300 = defaut value
-            //cmdBlock << "delay ${state.shortDelay}"
-            cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 51/*for FGK101*/, size: 2, configurationValue: [tempQuantumTenth]))  // less than 256...
-            cmdBlock << "delay ${state.shortDelay}"
-            cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 52/*for FGK101*/, size: 2, configurationValue: [56,64]))  // 0x3840 = 14400 = 4*3600 = 4 hours
-            cmdBlock << "delay ${state.shortDelay}"
-            cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 72/*for FGK101*/, size: 1, configurationValue: [0]/*No Association secured*/))
-            cmdBlock << "delay ${state.shortDelay}"
-            cmdBlock << encap(zwave.associationV2.associationSet(groupingIdentifier:1, nodeId: [zwaveHubNodeId]))
-            cmdBlock << "delay ${state.shortDelay}"
-            cmdBlock << encap(zwave.associationV2.associationSet(groupingIdentifier:2, nodeId: [zwaveHubNodeId]))
-			cmdBlock << "delay ${state.shortDelay}"
-			cmdBlock << encap(zwave.associationV2.associationSet(groupingIdentifier:5, nodeId:[zwaveHubNodeId])) // backward compatibility for non-ZW5 Hub
-			cmdBlock << "delay ${state.shortDelay}"
-            cmdBlock << encap(zwave.associationV2.associationGet(groupingIdentifier:2))  // ??? : never returns any associationReport
-            cmdBlock << "delay ${state.shortDelay}"
-        sendEvent(name: "Initialized", value: 1)
+    	// sensorMultilevelGet() should definitely NOT be CRC16 encoded ! [buggy ZW5 Fibaro handler !!]
+        // ZW5 : completely buggy synchronous sensorMultilevelReport() : +/- 1°C vs unsolicited asynchronous reports : ???
+		cmdBlock << zwave.sensorMultilevelV5.sensorMultilevelGet(sensorType: 1, scale: 0).format()
+    	cmdBlock << "delay ${state.longDelay}"
+        cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 3/*for FGK101*/, size: 1, configurationValue: [5]))  // LED blinks on Tampering & Open/Close
+        cmdBlock << "delay ${state.shortDelay}"
+		cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 50/*for FGK101*/, size: 2, configurationValue: [0,60]))  // measure temperature every mn = 60s
+		cmdBlock << "delay ${state.shortDelay}"
+        cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 51/*for FGK101*/, size: 2, configurationValue: [0,tempQuantumTenth]))  // less than 256...
+        cmdBlock << "delay ${state.shortDelay}"
+        cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 52/*for FGK101*/, size: 2, configurationValue: [0x38,0x40]))  // 0x3840 = 14400 = 4*3600 = 4 hours
+        cmdBlock << "delay ${state.shortDelay}"
+        // 1st Association Group : "Lifeline" reports the device status and allows for assigning single device only (main controller by default)
+        cmdBlock << encap(zwave.associationV2.associationSet(groupingIdentifier:1, nodeId: [zwaveHubNodeId]))
+        cmdBlock << "delay ${state.shortDelay}"
+        // 2nd Association Group : "Control" is assigned to the device status - reed sensor and IN input (sends alarm command frames).
+        cmdBlock << encap(zwave.associationV2.associationSet(groupingIdentifier:2, nodeId: [zwaveHubNodeId]))
+		cmdBlock << "delay ${state.shortDelay}"
+        // Should be last for proper checking of complete initialization (through configurationReport)
+		cmdBlock << encap(zwave.configurationV2.configurationGet(parameterNumber: 51/*for FGK101*/))
+		cmdBlock << "delay ${state.shortDelay}"
+		cmdBlock << encap(zwave.wakeUpV2.wakeUpNoMoreInformation())
+    	log.debug "++++++Last ZW5 Configuration Command SENT++++++"
     }
-    log.debug "device.Initialized: ${device.currentValue('Initialized')}"
+    //log.debug "device.Configured: ${device.currentValue('Configured')}"
 	return cmdBlock // Fully configured only after 2 Configure() calls
 }  
 
@@ -749,7 +792,7 @@ private crc16(physicalgraph.zwave.Command cmd) {
 
 //ZW5 added
 private encap(physicalgraph.zwave.Command cmd) {
-    def secureClasses = [0x20, 0x2B, 0x30, /*0x31, NOT secured in rawDescription*/ 0x5A, 0x70, 0x71, 0x84, 0x85, 0x8E, 0x9C]
+    def secureClasses = [0x20, 0x2B, 0x30, /*0x31, ???NOT secured in rawDescription???*/ 0x5A, 0x70, 0x71, 0x84, 0x85, 0x8E, 0x9C]
     //todo: check if secure inclusion was successful
     //if not do not send security-encapsulated command
     if ((device.currentValue('ZW5set')==1) & (device.currentValue('ZW5')==1)) {
