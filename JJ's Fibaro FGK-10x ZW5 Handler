@@ -1,5 +1,5 @@
 /**
- *  Fibaro Z-Wave FGK-101 Temperature & Door/Window Sensor Handler [v0.9.6.6, 4 May 2017]
+ *  Fibaro Z-Wave FGK-101 Temperature & Door/Window Sensor Handler [v0.9.6.7, 6 May 2017]
  *		
  *  Copyright 2014 Jean-Jacques GUILLEMAUD
  *
@@ -275,9 +275,11 @@ def wakeUpResponse(cmdBlock0) {
     	if (device.currentValue('ZW5')) {
         	// sensorMultilevelGet() should definitely NOT be CRC16 encoded ! [buggy ZW5 Fibaro handler !!]
             // sensorMultilevelReport() synchronous answer to sensorMultilevelGet() is buggy for whatever reason (+/-1°C) => disable sensorMultilevelGet()
-			//cmdBlock << zwave.sensorMultilevelV5.sensorMultilevelGet(sensorType: 1, scale: 0).format()
+        	// DS18B20 temperature measurement at 12bits accuracy takes more than 750ms
+        	//cmdBlock << zwave.sensorMultilevelV5.sensorMultilevelGet(sensorType: 1, scale: 0).format()
 			//cmdBlock << "delay ${state.longDelay}"
     	} else {
+        	// DS18B20 temperature measurement at 12bits accuracy takes more than 750ms
     		cmdBlock << zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint: 2, destinationEndPoint: 2, commandClass:0x31, command:4).format()  //sensorMultiLevel.get()
             cmdBlock << "delay ${state.longDelay}"
     	}
@@ -438,13 +440,13 @@ def openClosed(cmd, cmdValue) {
     // Use closed/open sensor notification to trigger push of updated Temperature value and immediate setting of updated device parameters
     // Sometimes, Temperature forced refresh stops working : SensorMultilevelGet(sensorType: 1, scale: 0) Commands are stacked but not executed immediately;
     // will restart after some time, and stacked Commands will be executed !
-    def event = createEvent(name:"contact", value:"${theState}", descriptionText:"${device.displayName} is ${theState} [${cmd}]", isStateChange:true, displayed:true, linkText:"${device.displayName}")
+    def event = createEvent(name:"contact", value:"${theState}", descriptionText:"${device.displayName} is ${theState}", isStateChange:true, displayed:true, linkText:"${device.displayName}")
     sendEvent(name: "forcedWakeUp", value: 1, displayed: false)
     return [event, response(wakeUpResponse([]))]
 }
     
-// BasicSet does not seem to wait for any Commands answers, going back to sleep immediately ???
-// Thus it cannot perform proper initial Configuration => use SensorAlarmReport instead
+// pre-ZW5 : BasicSet alarm does not seem to wait for any Commands answers, going back to sleep immediately ???
+//           Thus it cannot perform proper initial Configuration => use the Tamper switch and SensorAlarmReport instead
 def zwaveEvent(physicalgraph.zwave.commands.basicv1.BasicSet cmd) {
     log.debug "basicv1.BasicSet $cmd"
     if ((device.currentValue('ZW5set')) && (!(device.currentValue('ZW5')))) {
@@ -472,12 +474,12 @@ def zwaveEvent(physicalgraph.zwave.commands.notificationv3.NotificationReport cm
         	case 22:
             	map.name = "contact"
                 map.value = "open"
-                map.descriptionText = "${device.displayName} is open [NotificationReport]"
+                map.descriptionText = "${device.displayName} is open"
             	break
             case 23:
             	map.name = "contact"
                 map.value = "closed"
-                map.descriptionText = "${device.displayName} is closed [NotificationReport]"
+                map.descriptionText = "${device.displayName} is closed"
             	break
         }
     // Contrary to pre-ZW5 Devices, the Tamper Notification does not occur for only a brief 
@@ -549,8 +551,8 @@ def zwaveEvent(physicalgraph.zwave.commands.configurationv2.ConfigurationReport 
 	} else {
 		tempQuantumSixteenth = 5	/* 5/16=0.31°C = 0.56°F */
 	}
-	if (device.currentValue('ZW5set') && !(device.currentValue('ZW5')) && (cmd.parameterNumber == 12) && (cmd.configurationValue == [0,tempQuantumSixteenth])) {
-		sendEvent(name: "Configured", value: 1)
+	if (device.currentValue('ZW5set') && !(device.currentValue('ZW5')) && (cmd.parameterNumber == 12) && (cmd.configurationValue == [tempQuantumSixteenth])) {
+		sendEvent(name: "Configured", value: 1, isStateChange: true)
 		log.debug ("++++++Non-ZW5 Device Configured++++++")
 	}
 	def byte tempQuantumTenth
@@ -560,21 +562,21 @@ def zwaveEvent(physicalgraph.zwave.commands.configurationv2.ConfigurationReport 
     	tempQuantumTenth = 3	/* 3/10=0.3°C = 0.56°F */
     }
 	if (device.currentValue('ZW5set') && device.currentValue('ZW5') && (cmd.parameterNumber == 51) && (cmd.configurationValue == [0,tempQuantumTenth])) {
-		sendEvent(name: "Configured", value: 1)
+		sendEvent(name: "Configured", value: 1, isStateChange: true)
 		log.debug ("++++++ZW5 Device Configured++++++")
 	}
 }
 
 def zwaveEvent(physicalgraph.zwave.commands.associationv2.AssociationReport cmd) {
-        def result = []
-        if (cmd.nodeId.any { it == zwaveHubNodeId }) {
-                result << createEvent(descriptionText: "$device.displayName is associated in group ${cmd.groupingIdentifier}")
-        } else if (cmd.groupingIdentifier == 1) {
-                // We're not associated properly to group 1, set association
-                result << createEvent(descriptionText: "Associating $device.displayName in group ${cmd.groupingIdentifier}")
-                result << response(zwave.associationV1.associationSet(groupingIdentifier:cmd.groupingIdentifier, nodeId:zwaveHubNodeId))
-        }
-        result
+	def result = []
+	if (cmd.nodeId.any { it == zwaveHubNodeId }) {
+		result << createEvent(descriptionText: "$device.displayName is associated in group ${cmd.groupingIdentifier}")
+	} else if (cmd.groupingIdentifier == 1) {
+		// We're not associated properly to group 1, set association
+		result << createEvent(descriptionText: "Associating $device.displayName in group ${cmd.groupingIdentifier}")
+		result << response(zwave.associationV1.associationSet(groupingIdentifier:cmd.groupingIdentifier, nodeId:zwaveHubNodeId))
+	}
+	result
 }
 
 def zwaveEvent(physicalgraph.zwave.commands.multichannelv3.MultiChannelEndPointReport cmd) {
@@ -595,9 +597,9 @@ def zwaveEvent(physicalgraph.zwave.commands.versionv1.VersionReport cmd) {
     def deviceFirmwareVersion = (short) cmd.applicationVersion*1000 + cmd.applicationSubVersion
     log.debug "deviceFirmwareVersion: ${deviceFirmwareVersion}"
     if (deviceFirmwareVersion >= 3002) {
-        sendEvent(name: "ZW5", value: 1)
+        sendEvent(name: "ZW5", value: 1, isStateChange: true)
     } else {
-        sendEvent(name: "ZW5", value: 0)
+        sendEvent(name: "ZW5", value: 0, isStateChange: true)
     }
     sendEvent(name: "ZW5set", value: 1)
     log.debug "device.ZW5set: ${device.currentValue('ZW5set')}"
@@ -608,11 +610,11 @@ def zwaveEvent(physicalgraph.zwave.commands.versionv1.VersionReport cmd) {
 // MultiChannelCmdEncap and MultiInstanceCmdEncap are ways that devices can indicate that a message
 // is coming from one of multiple subdevices or "endpoints" that would otherwise be indistinguishable
 def zwaveEvent(physicalgraph.zwave.commands.multichannelv3.MultiChannelCmdEncap cmd) {
-        def encapsulatedCommand = cmd.encapsulatedCommand([0x30: 2, 0x31: 5]) // can specify command class versions here like in zwave.parse
-        if (state.debugLevel>=2) {log.debug ("Command from endpoint ${cmd.sourceEndPoint}: ${encapsulatedCommand}")}
-        if (encapsulatedCommand) {
-                return zwaveEvent(encapsulatedCommand)
-        }
+	def encapsulatedCommand = cmd.encapsulatedCommand([0x30: 2, 0x31: 5]) // can specify command class versions here like in zwave.parse
+	if (state.debugLevel>=2) {log.debug ("Command from endpoint ${cmd.sourceEndPoint}: ${encapsulatedCommand}")}
+	if (encapsulatedCommand) {
+		return zwaveEvent(encapsulatedCommand)
+	}
 }
 
 // Catch All command Handler in case of unexpected message
@@ -711,13 +713,13 @@ def configureDev() {
         // inclusion of Device in Association#2 is needed to enable SensorAlarmReport() Command [anti-Tampering protection]
         cmdBlock << zwave.associationV2.associationSet(groupingIdentifier:2, nodeId:[zwaveHubNodeId]).format()
         cmdBlock << "delay ${state.longDelay}"
-//cmdBlock << zwave.sensorMultilevelV5.sensorMultilevelGet(sensorType: 1, scale: 0).format()
-cmdBlock << zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint: 2, destinationEndPoint: 2, commandClass:0x31, command:4).format()  //sensorMultiLevel.get()
-cmdBlock << "delay ${state.longDelay}"
+        // DS18B20 temperature measurement at 12bits accuracy takes more than 750ms
+		cmdBlock << zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint: 2, destinationEndPoint: 2, commandClass:0x31, command:4).format()  //sensorMultiLevel.get()
+		cmdBlock << "delay ${state.longDelay}"
         // Should be last for proper checking of complete initialization (through configurationReport)
 		cmdBlock << zwave.configurationV2.configurationGet(parameterNumber: 12/*for FGK101*/).format()
 		cmdBlock << "delay ${state.longDelay}"
-cmdBlock << zwave.wakeUpV2.wakeUpNoMoreInformation().format()
+		cmdBlock << zwave.wakeUpV2.wakeUpNoMoreInformation().format()
         log.debug "++++++Last non-ZW5 Configuration Command SENT++++++"
     } 
     /////////////// ZW5 specific configuration
@@ -739,11 +741,12 @@ cmdBlock << zwave.wakeUpV2.wakeUpNoMoreInformation().format()
     	}
     	// sensorMultilevelGet() should definitely NOT be CRC16 encoded ! [buggy ZW5 Fibaro handler !!]
         // ZW5 : completely buggy synchronous sensorMultilevelReport() : +/- 1°C vs unsolicited asynchronous reports : ???
+        // DS18B20 temperature measurement at 12bits accuracy takes more than 750ms
 		cmdBlock << zwave.sensorMultilevelV5.sensorMultilevelGet(sensorType: 1, scale: 0).format()
     	cmdBlock << "delay ${state.longDelay}"
         cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 3/*for FGK101*/, size: 1, configurationValue: [5]))  // LED blinks on Tampering & Open/Close
         cmdBlock << "delay ${state.shortDelay}"
-		cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 50/*for FGK101*/, size: 2, configurationValue: [0,60]))  // measure temperature every mn = 60s
+		cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 50/*for FGK101*/, size: 2, configurationValue: [1,300-256]))  // measure temperature every 5 mn
 		cmdBlock << "delay ${state.shortDelay}"
         cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 51/*for FGK101*/, size: 2, configurationValue: [0,tempQuantumTenth]))  // less than 256...
         cmdBlock << "delay ${state.shortDelay}"
