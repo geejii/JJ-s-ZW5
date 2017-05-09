@@ -1,5 +1,5 @@
 /**
- *  Fibaro Z-Wave FGK-101 Temperature & Door/Window Sensor Handler [v0.9.6.7, 6 May 2017]
+ *  Fibaro Z-Wave FGK-101 Temperature & Door/Window Sensor Handler [v0.9.7, 9 May 2017]
  *		
  *  Copyright 2014 Jean-Jacques GUILLEMAUD
  *
@@ -272,14 +272,13 @@ def wakeUpResponse(cmdBlock0) {
     	//cmdBlock << encap(zwave.wakeUpV2.wakeUpIntervalGet()) // NB : may have to wait 60mn for that value to be refreshed !
     	//cmdBlock << "delay ${state.longDelay}"
     if (device.currentValue('ZW5set')) {
+    	// DS18B20 temperature measurement at 12bits accuracy takes more than 750ms...
     	if (device.currentValue('ZW5')) {
-        	// sensorMultilevelGet() should definitely NOT be CRC16 encoded ! [buggy ZW5 Fibaro handler !!]
+        	// sensorMultilevelGet() should be +++PROPERLY+++ CRC16-encoded ! buggy ZW5 Fibaro handler w/ checksum = 0x0000 !!!
             // sensorMultilevelReport() synchronous answer to sensorMultilevelGet() is buggy for whatever reason (+/-1°C) => disable sensorMultilevelGet()
-        	// DS18B20 temperature measurement at 12bits accuracy takes more than 750ms
-        	//cmdBlock << zwave.sensorMultilevelV5.sensorMultilevelGet(sensorType: 1, scale: 0).format()
+            //cmdBlock << crc16Encode(zwave.sensorMultilevelV5.sensorMultilevelGet(sensorType: 1, scale: 0))
 			//cmdBlock << "delay ${state.longDelay}"
     	} else {
-        	// DS18B20 temperature measurement at 12bits accuracy takes more than 750ms
     		cmdBlock << zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint: 2, destinationEndPoint: 2, commandClass:0x31, command:4).format()  //sensorMultiLevel.get()
             cmdBlock << "delay ${state.longDelay}"
     	}
@@ -445,8 +444,8 @@ def openClosed(cmd, cmdValue) {
     return [event, response(wakeUpResponse([]))]
 }
     
-// pre-ZW5 : BasicSet alarm does not seem to wait for any Commands answers, going back to sleep immediately ???
-//           Thus it cannot perform proper initial Configuration => use the Tamper switch and SensorAlarmReport instead
+// pre-ZW5 : BasicSet alarm does not seem to wait for any Commands answers, going back to sleep immediately;
+//           thus it cannot perform proper initial Configuration => use the Tamper switch and SensorAlarmReport instead
 def zwaveEvent(physicalgraph.zwave.commands.basicv1.BasicSet cmd) {
     log.debug "basicv1.BasicSet $cmd"
     if ((device.currentValue('ZW5set')) && (!(device.currentValue('ZW5')))) {
@@ -455,8 +454,8 @@ def zwaveEvent(physicalgraph.zwave.commands.basicv1.BasicSet cmd) {
     }
 }
 
-// SensorBinaryReport should never occur since all status change notifications are asynchronous via BasicSet...
-// ...but ZW5 uses it instead of BasicSet, and in addition to Notification
+// For pre-ZW5, SensorBinaryReport should never occur since all status change notifications are asynchronous via BasicSet...
+// ...but ZW5 uses it in addition to BasicSet and Notification
 def zwaveEvent(physicalgraph.zwave.commands.sensorbinaryv2.SensorBinaryReport cmd) {
     log.debug "sensorbinaryv2.SensorBinaryReport $cmd"
     if ((device.currentValue('ZW5set')) && (!(device.currentValue('ZW5')))) {
@@ -507,7 +506,7 @@ def zwaveEvent(physicalgraph.zwave.commands.notificationv3.NotificationReport cm
 // SensorAlarmReport DOES wait for optional Commands answers, contrary to BasicSet
 def zwaveEvent(physicalgraph.zwave.commands.sensoralarmv1.SensorAlarmReport cmd) {
     if (state.debugLevel>=2) {log.debug "sensoralarmv1.SensorAlarmReport $cmd.sensorState"}
-    if (device.currentValue('ZW5')!=1) {
+    if (!(device.currentValue('ZW5'))) {
     	def event = createEvent(name:"alarm", descriptionText:"${device.displayName} is tampered with !", isStateChange:true, displayed:true, linkText:"${device.displayName}")
     	def cmdBlock = []
     	sendEvent(name: "forcedWakeUp", value: 1, displayed: false)
@@ -588,7 +587,7 @@ def zwaveEvent(physicalgraph.zwave.commands.multichannelv3.MultiChannelCapabilit
 }
 
 // ZW5 added : discriminate between ZW5 and pre-ZW5 Devices
-// ZW5 : ${cmd.applicationVersion}.${cmd.applicationSubVersion}>=3.2  pre-ZW5 : <= 2.5
+// ZW5 : ${cmd.applicationVersion}.${cmd.applicationSubVersion}>=3.2 ; pre-ZW5 : <= 2.5
 def zwaveEvent(physicalgraph.zwave.commands.versionv1.VersionReport cmd) {	
     //updateDataValue("version", "${cmd.applicationVersion}.${cmd.applicationSubVersion}")
     log.debug "versionv1.VersionReport: ${cmd}"
@@ -638,6 +637,8 @@ def reportNext(commandMsg) {
 // Executed each time the Handler is updated
 def updated() {
 	log.debug "Updated !"
+    def bytesToCRC = [0x56, 0x01, 0x31, 0x05, 0x01, 0x42, 0x09, 0x79]
+//log.debug "checksum 0BD3/3027 : zwaveCrc16([0x56, 0x01, 0x31, 0x05, 0x01, 0x42,0x09, 0x79]) : ${zwaveCrc16(bytesToCRC as byte[])}"
     sendEvent(name: "ZW5set", value: 0)
     sendEvent(name: "ZW5", value: 0)
     sendEvent(name: "Configured", value: 0)  // set to true by the LAST Command Response from configureDev()
@@ -719,7 +720,7 @@ def configureDev() {
         // Should be last for proper checking of complete initialization (through configurationReport)
 		cmdBlock << zwave.configurationV2.configurationGet(parameterNumber: 12/*for FGK101*/).format()
 		cmdBlock << "delay ${state.longDelay}"
-		cmdBlock << zwave.wakeUpV2.wakeUpNoMoreInformation().format()
+		//cmdBlock << zwave.wakeUpV2.wakeUpNoMoreInformation().format()
         log.debug "++++++Last non-ZW5 Configuration Command SENT++++++"
     } 
     /////////////// ZW5 specific configuration
@@ -739,11 +740,11 @@ def configureDev() {
     	} else {
     		tempQuantumTenth = 3	/* 3/10=0.3°C = 0.56°F */
     	}
-    	// sensorMultilevelGet() should definitely NOT be CRC16 encoded ! [buggy ZW5 Fibaro handler !!]
+    	// sensorMultilevelGet() should be +++PROPERLY+++ CRC16 encoded ! buggy ZW5 Fibaro handler w/ checksum = 0x0000 !!
         // ZW5 : completely buggy synchronous sensorMultilevelReport() : +/- 1°C vs unsolicited asynchronous reports : ???
         // DS18B20 temperature measurement at 12bits accuracy takes more than 750ms
-		cmdBlock << zwave.sensorMultilevelV5.sensorMultilevelGet(sensorType: 1, scale: 0).format()
-    	cmdBlock << "delay ${state.longDelay}"
+cmdBlock << crc16Encode(zwave.sensorMultilevelV5.sensorMultilevelGet(sensorType: 1, scale: 0))
+cmdBlock << "delay ${state.longDelay}"
         cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 3/*for FGK101*/, size: 1, configurationValue: [5]))  // LED blinks on Tampering & Open/Close
         cmdBlock << "delay ${state.shortDelay}"
 		cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 50/*for FGK101*/, size: 2, configurationValue: [1,300-256]))  // measure temperature every 5 mn
@@ -761,7 +762,7 @@ def configureDev() {
         // Should be last for proper checking of complete initialization (through configurationReport)
 		cmdBlock << encap(zwave.configurationV2.configurationGet(parameterNumber: 51/*for FGK101*/))
 		cmdBlock << "delay ${state.shortDelay}"
-		cmdBlock << encap(zwave.wakeUpV2.wakeUpNoMoreInformation())
+		//cmdBlock << zwave.wakeUpV2.wakeUpNoMoreInformation().format()
     	log.debug "++++++Last ZW5 Configuration Command SENT++++++"
     }
     //log.debug "device.Configured: ${device.currentValue('Configured')}"
@@ -782,29 +783,56 @@ def infos() {
     // -> ZW5 : "zw:Ss type:0701 mfr:010F prod:0701 model:2001 cc:5E,59,22,80,56,7A,72,73,98,31,86 sec:85,20,70,5A,8E,71,2B,9C,30,84"
 }
 
+/**********************************************************************************************************
+ *  Calculates the 16-bit CRC (CRC-CCITT) for a byte array.
+ *  Uses initial crc of 0x1D0F, and poly of 0x1021, as per Z-wave specification.
+ *  Reference: http://z-wave.sigmadesigns.com/wp-content/uploads/2016/08/SDS12652-13-Z-Wave-Command-Class-Specification-N-Z.pdf
+ *  Thanks to CODERSAUR : https://community.smartthings.com/t/handling-crc-16-encapsulation-commands-crc16encap/76931/4
+ **********************************************************************************************************/
+ private zwaveCrc16(byte[] bytes) {
+    short crc = 0x1D0F // It's important this is a short (16-bit)
+    short poly = 0x1021
+    bytes.each { workData ->
+        //for (bitMask = 0x80; bitMask != 0; bitMask >>= 1) {
+        // Need to use a different way to iterate, as rightshift operator '>>' and unsigned rightshift '>>>' do not appear to work in SmartThings.
+        [0b10000000,0b01000000,0b00100000,0b00010000,0b00001000,0b00000100,0b00000010,0b00000001].each { bitMask ->
+            def newBit = ((workData & bitMask) != 0) ^ ((crc & 0x8000) != 0);
+            crc <<= 1;
+            if (newBit) { crc ^= poly; }
+         }
+    }
+    return crc
+}
+
+// CRC16 Encoding for Hub's +++OUTGOING+++ Commands
+private crc16Encode(physicalgraph.zwave.Command cmd) {
+	log.debug "cmd: ${cmd}"
+	def bytesToCRC = [0x56, 0x01, cmd.commandClassId, cmd.commandId]
+    bytesToCRC += cmd.payload
+	log.debug "bytesToCRC: ${bytesToCRC}"
+	def short checksum = zwaveCrc16(bytesToCRC as byte[])
+	log.debug  "5601${cmd.format()}${Integer.toHexString(checksum & 0xFFFF).toUpperCase()}"
+	return "5601${cmd.format()}${Integer.toHexString(checksum & 0xFFFF).toUpperCase()}"
+}
+
 //ZW5 added
 private secure(physicalgraph.zwave.Command cmd) {
 	zwave.securityV1.securityMessageEncapsulation().encapsulate(cmd).format()
 }
 
 //ZW5 added
-private crc16(physicalgraph.zwave.Command cmd) {
-	//zwave.crc16EncapV1.crc16Encap().encapsulate(cmd).format()
-    "5601${cmd.format()}0000"
-}
-
-//ZW5 added
 private encap(physicalgraph.zwave.Command cmd) {
-    def secureClasses = [0x20, 0x2B, 0x30, /*0x31, ???NOT secured in rawDescription???*/ 0x5A, 0x70, 0x71, 0x84, 0x85, 0x8E, 0x9C]
+    def secureClasses = [0x20, 0x2B, 0x30, 0x5A, 0x70, 0x71, 0x84, 0x85, 0x8E, 0x9C]
     //todo: check if secure inclusion was successful
     //if not do not send security-encapsulated command
-    if ((device.currentValue('ZW5set')==1) & (device.currentValue('ZW5')==1)) {
+    if ((device.currentValue('ZW5set')) && (device.currentValue('ZW5'))) {
 		if (secureClasses.find{ it == cmd.commandClassId }) {
     		secure(cmd)
     	} else {
         	// ??? : very dubious all UNsecure outgoing ZW5 commands have to be CRC16 encoded; 
-            //       for sure batteryGet() and sensorMultilevelGet() must NOT be !
-    		crc16(cmd)
+            //		 sensorMultiLevelGet() MUST be, but for sure
+            //       batteryGet() and versionGet() need NOT be ! (but could be ?)
+    		crc16Encode(cmd)  // crc16() Fibaro code w/ checksum = 0x0000 was buggy
     	}
     } else {
     	return cmd.format()
