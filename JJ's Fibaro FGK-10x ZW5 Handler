@@ -1,5 +1,5 @@
 /**
- *  Fibaro Z-Wave FGK-101 Temperature & Door/Window Sensor Handler [v0.9.7, 9 May 2017]
+ *  Fibaro Z-Wave FGK-101 Temperature & Door/Window Sensor Handler [v0.9.7.1, 14 May 2017]
  *		
  *  Copyright 2014 Jean-Jacques GUILLEMAUD
  *
@@ -652,7 +652,7 @@ def updated() {
 state.shortDelay = 1200
 	// Real-time clock of sensors (ceramic resonator) is up to 3% inaccurate
     state.batteryInterval = (long) (24*60-45)*60*1000  // 83 700 000 : at least 1 Battery Report event every 23:15 hours
-    state.maxEventInterval = (long) (4*60-10)*60*1000  // 13 800 000 : at least 1 Temperature Report event every 3:50 hours
+    state.maxEventInterval = (long) (4*60-20)*60*1000  // 13 200 000 : at least 1 Temperature Report event every 3:40 hours (4 hours at most)
     state.parseCount=(int) 0
     if (!(state.deviceID)) {state.deviceID = device.name}
     log.debug "state.deviceID: ${state.deviceID}"
@@ -751,7 +751,10 @@ cmdBlock << "delay ${state.longDelay}"
 		cmdBlock << "delay ${state.shortDelay}"
         cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 51/*for FGK101*/, size: 2, configurationValue: [0,tempQuantumTenth]))  // less than 256...
         cmdBlock << "delay ${state.shortDelay}"
-        cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 52/*for FGK101*/, size: 2, configurationValue: [0x38,0x40]))  // 0x3840 = 14400 = 4*3600 = 4 hours
+        // ??? : parameter#52 seems to translate "1 second" into "1.92 second", based on actual measurements
+        //       => downrate 14 400 to 7 510 to compensate
+        //cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 52/*for FGK101*/, size: 2, configurationValue: [0x38,0x40]))  // 0x3840 = 14400 = 4*3600 = 4 hours
+        cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 52/*for FGK101*/, size: 2, configurationValue: [0x1D,0x56]))  // 0x1D56 = 7510
         cmdBlock << "delay ${state.shortDelay}"
         // 1st Association Group : "Lifeline" reports the device status and allows for assigning single device only (main controller by default)
         cmdBlock << encap(zwave.associationV2.associationSet(groupingIdentifier:1, nodeId: [zwaveHubNodeId]))
