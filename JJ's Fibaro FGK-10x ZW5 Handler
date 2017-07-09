@@ -1,5 +1,5 @@
 /**
- *  Fibaro Z-Wave FGK-101 Temperature & Door/Window Sensor Handler [v0.9.7.1, 14 May 2017]
+ *  Fibaro Z-Wave FGK-101 Temperature & Door/Window Sensor Handler [v0.9.7.2, 9 July 2017]
  *		
  *  Copyright 2014 Jean-Jacques GUILLEMAUD
  *
@@ -747,7 +747,8 @@ cmdBlock << crc16Encode(zwave.sensorMultilevelV5.sensorMultilevelGet(sensorType:
 cmdBlock << "delay ${state.longDelay}"
         cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 3/*for FGK101*/, size: 1, configurationValue: [5]))  // LED blinks on Tampering & Open/Close
         cmdBlock << "delay ${state.shortDelay}"
-		cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 50/*for FGK101*/, size: 2, configurationValue: [1,300-256]))  // measure temperature every 5 mn
+        // measuring temperature every 5mn drains the battery in a few months... but every hour creates a prejudiciable latency...
+		cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 50/*for FGK101*/, size: 2, configurationValue: [0x0E,0x10]))  // measure temperature every 1h = 3600s = 0xE10
 		cmdBlock << "delay ${state.shortDelay}"
         cmdBlock << encap(zwave.configurationV2.configurationSet(parameterNumber: 51/*for FGK101*/, size: 2, configurationValue: [0,tempQuantumTenth]))  // less than 256...
         cmdBlock << "delay ${state.shortDelay}"
