@@ -1,5 +1,5 @@
 /**
- *  Fibaro Z-Wave FGK-101 Temperature & Door/Window Sensor Handler [v0.9.7.2, 9 July 2017]
+ *  Fibaro Z-Wave FGK-101 Temperature & Door/Window Sensor Handler [v0.9.7.3, 12 September 2018]
  *		
  *  Copyright 2014 Jean-Jacques GUILLEMAUD
  *
@@ -112,7 +112,7 @@ metadata {
         for (int i = 0; i <= T_values.size()-1; i += 1) {
             Ti=T_values.get(i)
         	def theSensorValue = [(short)0, (short)0, (short)(Ti*100)/256, (short)(Ti*100)%256]
-			status "temperature ${Ti}°C":  zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint:2, destinationEndPoint:2).encapsulate(zwave.sensorMultilevelV5.sensorMultilevelReport(scaledSensorValue: i, precision: 2, scale: 0, sensorType: 1, sensorValue: theSensorValue, size:4)).incomingMessage()
+			// status "temperature ${Ti}°C":  zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint:2, destinationEndPoint:2).encapsulate(zwave.sensorMultilevelV5.sensorMultilevelReport(scaledSensorValue: i, precision: 2, scale: 0, sensorType: 1, sensorValue: theSensorValue, size:4)).incomingMessage()
         }
 	}
 
@@ -364,7 +364,7 @@ def zwaveEvent(physicalgraph.zwave.commands.sensormultilevelv5.SensorMultilevelR
         }
         //Round to nearest 1 decimal temperature value; convert to °F if needed
         def float ftempSign = temperatureScaleFC(scaledSensorValue) < 0 ? -1 : +1
-		def float ftemp = ftempSign * ((((int) (temperatureScaleFC(scaledSensorValue).abs()*100+5)/10)*1.0)/10)
+		def float ftemp = ftempSign * ((((temperatureScaleFC(scaledSensorValue).abs()*100+5)/10).intValue()*1.0)/10)
         if (state.debugLevel>=2) {
         	log.debug "ftempSign : ${ftempSign}"
         	log.debug "ftemp : ${ftemp}"
