@@ -119,7 +119,7 @@ metadata {
 	tiles { 
     	valueTile("temperature", "device.temperature", inactiveLabel: false, width: 2, height: 2, canChangeIcon: true, canChangeBackground: true) {
         	// label:'${name}', label:'${currentValue}', unit:"XXX" work, but NOT label:'${device.name}', label:'${displayName}', unit:'${unit}', ...
-			state "temperature", label:'${currentValue}°', unit:"C", icon: "st.alarm.temperature.normal",
+			state "temperature", label:'${currentValue}°\n', unit:"C", icon: "st.alarm.temperature.normal",
 			// redondant lines added to avoid color interpolation on Dashboard (a feature or a bug ?!)
             backgroundColors:[							// ***on IDE Simulator***		// ***on iPad App***
 				[value: 14, color: "#0033ff"],			//     °C <=14 : dark blue		//     °C <=14	: dark blue 
@@ -143,7 +143,7 @@ metadata {
   /*      
         valueTile("temperatureF", "device.temperature", inactiveLabel: false, width: 2, height: 2, canChangeIcon: true, canChangeBackground: true) {
         	// label:'${name}', label:'${currentValue}', unit:"XXX" work, but NOT label:'${device.name}', label:'${displayName}', unit:'${unit}', ...
-			state "temperature", label:'${currentValue}°', unit:"F", icon: "st.alarm.temperature.normal",
+			state "temperature", label:'${currentValue}°\n', unit:"F", icon: "st.alarm.temperature.normal",
 			// redondant lines added to avoid color interpolation on Dashboard (a feature or a bug ?!)
             backgroundColors:[							// ***on IDE Simulator***		// ***on iPad App***
 				[value: 57, color: "#0033ff"],			//     °C <=14 : dark blue		//     °C <=14	: dark blue 
